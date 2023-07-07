@@ -1,0 +1,199 @@
+--triggers:trigger is special kind of SP, which fires automatically when an event occur in database for which it is defined.
+
+--trigger can be created, altered and drop, it can be dropped or disabled.
+-- trigger is not very good in performance since managing multiple triggers are very difficult on database level mostly.
+--execute of trigger cannot be controlled explicitly, it always fired automatically, it is overhead to server when lot of triggers are created.
+/*
+--there are two of trigger:
+1)instead of trigger
+2)after/for trigger
+
+events on which triggers can be created:
+1) DDL events(create_table, alter_table, drop_table)
+--only after trigger is possible
+
+2) DML events (insert,update,delete)
+--instead of and after trigger both are possible
+
+3) logon event (logon): here we can limit any particlar user to login between a fixed time domain.
+--after trigger is possible.
+
+use case of trigger:
+1) to put rules or constraint on database tables based on any action on same table or any other table
+  a) rule on table based on action on same table
+  for eg: a employee salary can be updated but new salary must be greater then the previous one.
+          to make fixed cardinality on the foreign key.
+		  to implement primary and foreign key relationship.
+
+  b) rules or constraint on table based on action of any other table.
+  for eg: a employee salary can only be increased if the designation is changing from the previous one.
+          stock table and orders table, when order is placd so stock or inventory must be automatically updated.
+
+2) by use of magic table complex logics such as maintaining stocks and inventory or verfication of data from any refrence dataset etc all can be formulated.
+
+
+3) to print any user defined messages or to populate audit tables after an event happened.
+
+
+4) to block users from applying DDL commands.
+*/
+
+--example1: 
+go
+create trigger tr01 on database
+after create_table
+as
+begin
+declare @var varchar(max),@tablename varchar(100)
+set @tablename=(select top 1 name from sys.tables order by create_date desc)
+set @var='drop table '+@tablename
+exec (@var)
+print 'you cannot create a table in this databse'
+end
+
+create table tb01
+(id int)
+select * from tr01
+
+disable all trigger  on database--please check
+drop trigger tr01 on database
+
+--example2: apply cardinality on parking table that each employee can make maximum to parking slots.
+emp, parking
+
+insert into parking values(1,'PA',1),(2,'PB',1),(3,'PC',1)
+
+
+
+--example3: inventory and orders table
+
+create table inventory
+(
+pid int not null primary key,
+pname varchar(50),
+qty int,
+price float
+)
+insert into inventory values (1,'laptop',100,500),(2,'nokia',80,150),(3,'samsung',70,200),(4,'printers',50,50)
+create table orders
+(
+oid int identity,
+cid int,
+pid int,
+qty int,
+ttl_price float
+)
+
+select * from inventory
+select * from orders
+--requirement: when a order is placed, update the inventory table accordingly, as well as before placing the order check the existing inventory.
+go
+create or alter trigger tr02 on dbo.orders
+instead of insert
+as
+begin
+declare @cid int,@pid int, @req_qty int,@ttl_price float,@oid int,@avl_qty int,@price int
+set @oid=(select top 1 oid from inserted)
+set @cid=(select cid from inserted where oid=@oid)
+set @req_qty=(select qty from inserted where oid=@oid)
+set @pid=(select pid from inserted where oid=@oid)
+set @price=(select price  from inventory where pid=@pid)
+set @avl_qty=(select qty from inventory where pid=@pid)
+
+if @avl_qty>=@req_qty
+begin
+insert into orders values
+(@cid,@pid,@req_qty,@req_qty*@price)
+update inventory set qty=qty-@req_qty where pid=@pid
+end
+else print 'the order cannot be placed due to insuffiecient inventory'
+end
+go
+
+insert into orders values(2,4,30,0)
+insert into orders values(2,1,5,0),(2,4,30,0),(2,4,30,0),(2,4,30,0)
+insert into orders values(2,4,30,0)
+
+
+select * from inventory
+select * from orders
+
+-- create the new trigger which can sell the available quamtity if required greater is gretaer also, and print a message that the rest quantity is not avaialble.
+
+--RECURSIVE TRIGGERS: when one trigger try to fire the event on second trigger and again second trigger try to fire the event on first trigger, then these are trigger are recursion.
+--finally the logic will not be implemented
+create table sampletr1
+(id int)
+create table sampletr2
+(id int)
+insert into sampletr1 values(1)
+
+select * from sampletr1
+select * from sampletr2
+
+create trigger tr04 on sampletr1
+instead of insert
+as
+insert into sampletr2 values(1)
+drop trigger tr04
+create trigger tr05 on sampletr2
+instead of insert
+as
+insert into sampletr1 values(1)
+
+--FIRING ORDER OF TRIGGER, WHEN MORE THEN ONE TRIGGER IS CREATED OR EXIST ON THE TABLE.
+create table sampletr1
+(id int)
+
+
+--triggerno=1
+create trigger tr07 on sampletr1
+after insert 
+as
+insert into audit_table values ()
+
+--triggerno2
+create trigger tr08 on sampletr1
+after insert 
+as
+insert into dub_sampletr1 values()
+
+
+--triggerno=3
+create trigger tr08 on sampletr1
+instead of  insert 
+as
+verify each record using inserted table
+
+--ORDER OF EXECUTION OF MULTIPLE TRIGGER IS SAME AS THEY ARE CREATED.
+--WE HAVE ANOTHER OPTION TO SET THE ORDER OF FIRST AND LAST TRIGGER.
+
+sp_settriggerorder [ @triggername = ] '[ triggerschema. ] triggername'   
+    , [ @order = ] 'value'   (HERE FIRST AND LAST KEYWORD CAN BE USED)
+
+--MAGIC TABLES: MAGIC TABLE ARE VIRTUAL TABLES, THAT HOLD RECENT dml RECORDS FOR TEMPORARY BASIS, ONLY TRIGGER CAN ACCESS THESE MAGIC TABLES MOSTLY FOR INSTEAD OF TRIGGER, WHERE FIRST DATA NEED TO BE CHECKED AND THEN LOGIC NEED TO BE IMPLEMENTED.
+
+--in insert command if any value inserted is not from employee table then those value should be rejected.
+create or alter trigger tr07 on sampletr1
+instead of insert
+as
+declare @table table(srno int identity, id int)
+insert into @table
+select id from inserted 
+declare @counter int=1, @id int
+while @counter<=(select count(*) from @table)
+begin
+set @id=(select id from @table where srno=@counter)
+if @id in (select BusinessEntityID  from AdventureWorks2019.HumanResources.Employee)
+insert into sampletr1 values
+(@id)
+else print 'id is not allowed'
+set @counter=@counter+1
+end
+
+insert into sampletr1 values(1),(2),(3),(300)
+
+select * from sampletr1
+truncate table sampletr1
+
+select * from AdventureWorks2019.HumanResources.Employee
